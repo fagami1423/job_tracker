@@ -9,3 +9,4 @@ async def get_db():
     finally:
         # Here you can close the connection if needed
         pass
+    

@@ -3,6 +3,13 @@ from jose import JWTError, jwt
 from typing import Optional
 from .security import verify_password
 from .config import settings
+from motor.motor_asyncio import AsyncIOMotorClient
+from utils.helper import get_database
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # To get a string like this run:
 # openssl rand -hex 32
@@ -20,10 +27,32 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-def authenticate_user(fake_db, email: str, password: str):
-    user = fake_db.get(email)
-    if not user:
-        return False
-    if not verify_password(password, user['hashed_password']):
-        return False
+async def authenticate_user(db: AsyncIOMotorClient, username: str, password: str):
+    user_collection = db["users"]
+    user = await user_collection.find_one({"username": username})
+    if user and verify_password(password, user["hashed_password"]):
+        return user
+    return None
+
+def verify_token(token: str, credentials_exception):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+        return user_id
+    except JWTError:
+        raise credentials_exception
+    
+async def get_current_user(db: AsyncIOMotorClient = Depends(get_database), token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    email = verify_token(token, credentials_exception)
+    
+    user = await db['users'].find_one({"email":email})
+    if user is None:
+        raise credentials_exception
     return user
